@@ -87,7 +87,7 @@ class LSTMAE_Lightning(pl.LightningModule):
         y = y.to(self.device)
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(output, y)
-        self.log('train_loss', loss, prog_bar=True)
+        self.log('test_loss', loss, prog_bar=True)
         return loss
 
     def configure_optimizers(self):

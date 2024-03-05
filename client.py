@@ -1,11 +1,13 @@
 import argparse
 from collections import OrderedDict
+from typing import Dict, List, Tuple
 
 import pytorch_lightning as pl
 import torch
 from datasets.utils.logging import disable_progress_bar
 
 import flwr as fl
+import numpy as np
 import mnist
 import ausgrid
 
@@ -19,14 +21,15 @@ class FlowerClient(fl.client.NumPyClient):
         self.val_loader = val_loader
         self.test_loader = test_loader
 
-    def get_parameters(self, config):
-        encoder_params = _get_parameters(self.model.encoder)
-        decoder_params = _get_parameters(self.model.decoder)
-        return encoder_params + decoder_params
+    def get_parameters(self, config) -> List[np.ndarray]:
+        # Return model parameters as a list of NumPy ndarrays
+        return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
-    def set_parameters(self, parameters):
-        _set_parameters(self.model.encoder, parameters[:4])
-        _set_parameters(self.model.decoder, parameters[4:])
+    def set_parameters(self, parameters: List[np.ndarray]) -> None:
+        # Set model parameters from a list of NumPy ndarrays
+        params_dict = zip(self.model.state_dict().keys(), parameters)
+        state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
+        self.model.load_state_dict(state_dict, strict=True)
 
     def fit(self, parameters, config):
         self.set_parameters(parameters)
@@ -41,19 +44,13 @@ class FlowerClient(fl.client.NumPyClient):
 
         trainer = pl.Trainer()
         results = trainer.test(self.model, self.test_loader)
+        print("-------------------------------------------RESULTADOS --------------------------------------------------")
+        print(results)
+
         loss = results[0]["test_loss"]
 
         return loss, 10000, {"loss": loss}
 
-
-def _get_parameters(model):
-    return [val.cpu().numpy() for _, val in model.state_dict().items()]
-
-
-def _set_parameters(model, parameters):
-    params_dict = zip(model.state_dict().keys(), parameters)
-    state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
-    model.load_state_dict(state_dict, strict=True)
 
 
 def main() -> None:
