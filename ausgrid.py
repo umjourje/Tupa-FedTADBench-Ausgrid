@@ -3,6 +3,7 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+import torchmetrics
 
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
@@ -10,7 +11,7 @@ from torch.utils.data import DataLoader, Dataset
 import lightning as L
 import pytorch_lightning as pl
 
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_score
 from sklearn.preprocessing import MinMaxScaler
 
 
@@ -32,6 +33,10 @@ class LSTMAE_Lightning(pl.LightningModule):
                                num_layers=self.n_layers[1], bias=self.use_bias[1], dropout=self.dropout[1])
         self.hidden2output = nn.Linear(self.hidden_size, self.n_features)
 
+        self.automatic_optimization = False
+        
+        self.scores = []
+        self.ys = []
 
     def forward(self, batch, Pi=None, priors_corr=None, prior_test=None):
         batch_size = batch.shape[0]
@@ -64,11 +69,18 @@ class LSTMAE_Lightning(pl.LightningModule):
                 torch.zeros(self.n_layers[0], batch_size, self.hidden_size))
 
     def training_step(self, batch, batch_idx):
+        opt = self.optimizers()
+        opt.zero_grad()                       #### Trainer
+        
         x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
         feature, logits, output = self.forward(x)
+        
         loss = F.mse_loss(output, y)
+        loss.backward()                             #### Trainer
+        opt.step()
+        
         self.log('train_loss', loss)
         return loss
 
@@ -77,22 +89,57 @@ class LSTMAE_Lightning(pl.LightningModule):
         x = x.to(self.device)
         y = y.to(self.device)
         feature, logits, output = self.forward(x)
-        loss = F.mse_loss(output, y)
+        loss = F.mse_loss(feature, y)
+        
+        # accu = accuracy_score(output, y)
         self.log('train_val_loss', loss)
+        # self.log('train_val_accuracy', accu)
         return loss
     
     def test_step(self, batch, batch_idx):
         x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
+
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(output, y)
+
+    
+        self.scores.append(logits.detach().cpu().numpy())
+        self.ys.append(y.detach().cpu().numpy())
+        
+        if (len(y.unique())==1):
+            self.ys.append(np.array(1.))
+
+        scores = np.concatenate(self.scores, axis=0)
+        ys = np.concatenate(self.ys, axis=0)
+
+        print("----------------------------------------------------")
+        print("shape ys: ", ys.shape)
+        print("y_true: ", y.unique())
+
+        # if len(scores.shape) == 2:
+        #     scores = np.squeeze(scores, axis=1)
+        # if len(ys.shape) == 2:
+        #     ys = np.squeeze(ys, axis=1)
+
+        auc_roc = roc_auc_score(ys, scores)
+        ap = average_precision_score(ys, scores)
+        accu = accuracy_score(output, y)
+
         self.log('test_loss', loss, prog_bar=True)
+        self.log('test_auc_roc', auc_roc)
+        self.log('test_avg_precision', ap)
+        self.log('test_accuracy', accu)
+        # self.log('test_accuracy', accu, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters())
     
+    def backward(self, loss):
+        loss.backward()
+
     def on_before_zero_grad(self, *args, **kwargs):
         # Ensure that the hidden state is on the same device as the model
         self.hidden2output = self.hidden2output.to(self.device)
