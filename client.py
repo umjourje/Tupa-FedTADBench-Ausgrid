@@ -97,7 +97,7 @@ def main() -> None:
                    n_layers=args['n_layers'], use_bias=args['use_bias'], 
                    dropout=args['dropout'])
     
-    trainer = pl.Trainer(max_epochs=1, accelerator='cpu')
+    trainer = pl.Trainer(max_epochs=2, accelerator='cpu')
 
     # Train
     trainer.fit(model, train_loader)
@@ -106,6 +106,27 @@ def main() -> None:
     trainer.test(model, test_loader)
 
     val_loader = None
+
+    # Metrics
+    model_save_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/logs_metrics/models/' + args['dataset_name'] + '_model_epoch_' + '.pth'
+    score_save_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/logs_metrics/scores/' + args['dataset_name'] + '_score_epoch_' + '.npy'
+
+    auc_roc_metric, avg_precicion_metric, scores_epoch = model.calc_metrics()
+    print("=======================================================")
+    print('auc-roc: ' + str(auc_roc_metric) + ' auc_pr: ' + str(avg_precicion_metric))
+    print("=======================================================")
+    
+    best_auc_roc = 0
+    best_ap = 0
+
+    if auc_roc_metric > best_auc_roc:
+            best_auc_roc = auc_roc_metric
+            best_ap = avg_precicion_metric
+            torch.save(model.state_dict(), model_save_path)
+            np.save(score_save_path, scores_epoch)
+            print(' update')
+    else:
+        print()
 
     # Flower client
     client = FlowerClient(model, train_loader, val_loader, test_loader).to_client()

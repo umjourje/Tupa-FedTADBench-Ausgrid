@@ -18,7 +18,8 @@ from sklearn.preprocessing import MinMaxScaler
 
 class LSTMAE_Lightning(pl.LightningModule):
     def __init__(self, n_features: int, hidden_size: int,
-                 n_layers: tuple, use_bias: tuple, dropout: tuple):
+                 n_layers: tuple, use_bias: tuple, 
+                 dropout: tuple, device: torch.device):
         super().__init__()
         self.n_features = n_features
         self.hidden_size = hidden_size
@@ -28,15 +29,16 @@ class LSTMAE_Lightning(pl.LightningModule):
         self.dropout = dropout
 
         self.encoder = nn.LSTM(self.n_features, self.hidden_size, batch_first=True,
-                               num_layers=self.n_layers[0], bias=self.use_bias[0], dropout=self.dropout[0])
+                               num_layers=self.n_layers[0], bias=self.use_bias[0], dropout=self.dropout[0], device=device)
         self.decoder = nn.LSTM(self.n_features, self.hidden_size, batch_first=True,
-                               num_layers=self.n_layers[1], bias=self.use_bias[1], dropout=self.dropout[1])
-        self.hidden2output = nn.Linear(self.hidden_size, self.n_features)
+                               num_layers=self.n_layers[1], bias=self.use_bias[1], dropout=self.dropout[1], device=device)
+        self.hidden2output = nn.Linear(self.hidden_size, self.n_features, device=device)
 
         self.automatic_optimization = False
         
         self.scores = []
         self.ys = []
+        self.output_model = None
 
     def forward(self, batch, Pi=None, priors_corr=None, prior_test=None):
         batch_size = batch.shape[0]
@@ -71,7 +73,7 @@ class LSTMAE_Lightning(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         opt = self.optimizers()
         opt.zero_grad()                       #### Trainer
-        
+        print(self.device, type(self.device))
         x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
@@ -100,6 +102,9 @@ class LSTMAE_Lightning(pl.LightningModule):
         x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
+        
+        opt = self.optimizers()
+        opt.zero_grad()
 
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(output, y)
@@ -107,30 +112,8 @@ class LSTMAE_Lightning(pl.LightningModule):
     
         self.scores.append(logits.detach().cpu().numpy())
         self.ys.append(y.detach().cpu().numpy())
-        
-        if (len(y.unique())==1):
-            self.ys.append(np.array(1.))
-
-        scores = np.concatenate(self.scores, axis=0)
-        ys = np.concatenate(self.ys, axis=0)
-
-        print("----------------------------------------------------")
-        print("shape ys: ", ys.shape)
-        print("y_true: ", y.unique())
-
-        # if len(scores.shape) == 2:
-        #     scores = np.squeeze(scores, axis=1)
-        # if len(ys.shape) == 2:
-        #     ys = np.squeeze(ys, axis=1)
-
-        auc_roc = roc_auc_score(ys, scores)
-        ap = average_precision_score(ys, scores)
-        accu = accuracy_score(output, y)
 
         self.log('test_loss', loss, prog_bar=True)
-        self.log('test_auc_roc', auc_roc)
-        self.log('test_avg_precision', ap)
-        self.log('test_accuracy', accu)
         # self.log('test_accuracy', accu, prog_bar=True)
         return loss
 
@@ -148,6 +131,22 @@ class LSTMAE_Lightning(pl.LightningModule):
         # Ensure that the hidden state is on the same device as the model
         self.hidden2output = self.hidden2output.to(self.device)
 
+    def calc_metrics(self):
+
+        scores = np.concatenate(self.scores, axis=0)
+        ys = np.concatenate(self.ys, axis=0)
+
+        if len(scores.shape) == 2:
+            scores = np.squeeze(scores, axis=1)
+        if len(ys.shape) == 2:
+            ys = np.squeeze(ys, axis=1)
+
+        auc_roc = roc_auc_score(ys, scores)
+        ap = average_precision_score(ys, scores)
+
+        # self.log('test_auc_roc', auc_roc, prog_bar=True)
+        # self.log('test_avg_precision', ap, prog_bar=True)
+        return auc_roc, ap, scores
 
 class Ausgrid_Dataset(Dataset):
 
@@ -275,7 +274,7 @@ def load_data(node_id, batch_size, window_len):
 def main() -> None:
     """Centralized training."""
 
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     checkpoint_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/'
 
@@ -291,25 +290,24 @@ def main() -> None:
     # model = LSTMAE_Lightning.load_from_checkpoint(checkpoint_path+"checkpoint.ckpt")
     model = LSTMAE_Lightning(n_features=7, hidden_size=args['hidden_size'],
                    n_layers=args['n_layers'], use_bias=args['use_bias'], 
-                   dropout=args['dropout'])
+                   dropout=args['dropout'], device=device)
 
 
     # Train
-    trainer = pl.Trainer(max_epochs=args['epochs'], accelerator='cpu', default_root_dir=checkpoint_path)
+    trainer = pl.Trainer(max_epochs=args['epochs'], accelerator='gpu', default_root_dir=checkpoint_path)
     trainer.fit(model, train_loader)
 
     # Validation
-    return_val = trainer.validate(model, val_loader)
-    
-    print("=======================================================")
-    print(return_val)
-    print("=======================================================")
+    trainer.validate(model, val_loader)
     
     # Test
-    return_test = trainer.test(model, test_loader)
+    trainer.test(model, test_loader)
 
+
+    # get metrics
+    auc_roc_metric, avg_precicion_metric = model.calc_metrics()
     print("=======================================================")
-    print(return_test)
+    print('auc-roc: ' + str(auc_roc_metric) + ' auc_pr: ' + str(avg_precicion_metric), end='')
     print("=======================================================")
     
 
