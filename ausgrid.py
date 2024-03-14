@@ -19,7 +19,7 @@ from sklearn.preprocessing import MinMaxScaler
 class LSTMAE_Lightning(pl.LightningModule):
     def __init__(self, n_features: int, hidden_size: int,
                  n_layers: tuple, use_bias: tuple, 
-                 dropout: tuple, device: torch.device):
+                 dropout: tuple):
         super().__init__()
         self.n_features = n_features
         self.hidden_size = hidden_size
@@ -29,10 +29,10 @@ class LSTMAE_Lightning(pl.LightningModule):
         self.dropout = dropout
 
         self.encoder = nn.LSTM(self.n_features, self.hidden_size, batch_first=True,
-                               num_layers=self.n_layers[0], bias=self.use_bias[0], dropout=self.dropout[0], device=device)
+                               num_layers=self.n_layers[0], bias=self.use_bias[0], dropout=self.dropout[0])
         self.decoder = nn.LSTM(self.n_features, self.hidden_size, batch_first=True,
-                               num_layers=self.n_layers[1], bias=self.use_bias[1], dropout=self.dropout[1], device=device)
-        self.hidden2output = nn.Linear(self.hidden_size, self.n_features, device=device)
+                               num_layers=self.n_layers[1], bias=self.use_bias[1], dropout=self.dropout[1])
+        self.hidden2output = nn.Linear(self.hidden_size, self.n_features)
 
         self.automatic_optimization = False
         
@@ -71,25 +71,17 @@ class LSTMAE_Lightning(pl.LightningModule):
                 torch.zeros(self.n_layers[0], batch_size, self.hidden_size))
 
     def training_step(self, batch, batch_idx):
-        opt = self.optimizers()
-        opt.zero_grad()                       #### Trainer
-        print(self.device, type(self.device))
         x, y = batch
-        x = x.to(self.device)
-        y = y.to(self.device)
+
         feature, logits, output = self.forward(x)
-        
         loss = F.mse_loss(output, y)
-        loss.backward()                             #### Trainer
-        opt.step()
         
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        x = x.to(self.device)
-        y = y.to(self.device)
+
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(feature, y)
         
@@ -100,15 +92,9 @@ class LSTMAE_Lightning(pl.LightningModule):
     
     def test_step(self, batch, batch_idx):
         x, y = batch
-        x = x.to(self.device)
-        y = y.to(self.device)
-        
-        opt = self.optimizers()
-        opt.zero_grad()
 
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(output, y)
-
     
         self.scores.append(logits.detach().cpu().numpy())
         self.ys.append(y.detach().cpu().numpy())
@@ -125,11 +111,11 @@ class LSTMAE_Lightning(pl.LightningModule):
 
     def on_before_zero_grad(self, *args, **kwargs):
         # Ensure that the hidden state is on the same device as the model
-        self.hidden2output = self.hidden2output.to(self.device)
+        self.hidden2output = self.hidden2output
 
     def on_train_batch_start(self, *args, **kwargs):
         # Ensure that the hidden state is on the same device as the model
-        self.hidden2output = self.hidden2output.to(self.device)
+        self.hidden2output = self.hidden2output
 
     def calc_metrics(self):
 
@@ -274,7 +260,7 @@ def load_data(node_id, batch_size, window_len):
 def main() -> None:
     """Centralized training."""
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     checkpoint_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/'
 
@@ -290,11 +276,11 @@ def main() -> None:
     # model = LSTMAE_Lightning.load_from_checkpoint(checkpoint_path+"checkpoint.ckpt")
     model = LSTMAE_Lightning(n_features=7, hidden_size=args['hidden_size'],
                    n_layers=args['n_layers'], use_bias=args['use_bias'], 
-                   dropout=args['dropout'], device=device)
+                   dropout=args['dropout'])
 
 
     # Train
-    trainer = pl.Trainer(max_epochs=args['epochs'], accelerator='gpu', default_root_dir=checkpoint_path)
+    trainer = pl.Trainer(max_epochs=args['epochs'], default_root_dir=checkpoint_path)
     trainer.fit(model, train_loader)
 
     # Validation
@@ -305,7 +291,7 @@ def main() -> None:
 
 
     # get metrics
-    auc_roc_metric, avg_precicion_metric = model.calc_metrics()
+    auc_roc_metric, avg_precicion_metric, scores_chkpt = model.calc_metrics()
     print("=======================================================")
     print('auc-roc: ' + str(auc_roc_metric) + ' auc_pr: ' + str(avg_precicion_metric), end='')
     print("=======================================================")
