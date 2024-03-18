@@ -117,6 +117,22 @@ class LSTMAE_Lightning(pl.LightningModule):
         # Ensure that the hidden state is on the same device as the model
         self.hidden2output = self.hidden2output
 
+    def on_test_end(self):
+        scores = np.concatenate(self.scores, axis=0)
+        ys = np.concatenate(self.ys, axis=0)
+
+        if len(scores.shape) == 2:
+            scores = np.squeeze(scores, axis=1)
+        if len(ys.shape) == 2:
+            ys = np.squeeze(ys, axis=1)
+
+        auc_roc = roc_auc_score(ys, scores)
+        ap = average_precision_score(ys, scores)
+
+        self.logger.experiment('test_auc_roc', auc_roc, prog_bar=True)
+        self.logger.experiment('test_avg_precision', ap, prog_bar=True)
+
+
     def calc_metrics(self):
 
         scores = np.concatenate(self.scores, axis=0)
@@ -130,8 +146,6 @@ class LSTMAE_Lightning(pl.LightningModule):
         auc_roc = roc_auc_score(ys, scores)
         ap = average_precision_score(ys, scores)
 
-        # self.log('test_auc_roc', auc_roc, prog_bar=True)
-        # self.log('test_avg_precision', ap, prog_bar=True)
         return auc_roc, ap, scores
 
 class Ausgrid_Dataset(Dataset):
@@ -280,7 +294,7 @@ def main() -> None:
 
 
     # Train
-    trainer = pl.Trainer(max_epochs=args['epochs'], default_root_dir=checkpoint_path)
+    trainer = pl.Trainer(max_epochs=args['epochs'],accelerator='cpu',  default_root_dir=checkpoint_path)
     trainer.fit(model, train_loader)
 
     # Validation

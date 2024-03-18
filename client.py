@@ -34,7 +34,7 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         self.set_parameters(parameters)
 
-        trainer = pl.Trainer(max_epochs=1)
+        trainer = pl.Trainer(max_epochs=1, accelerator='cpu', default_root_dir='/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/')
         trainer.fit(self.model, self.train_loader,)
 
         return self.get_parameters(config={}), 55000, {}
@@ -42,9 +42,9 @@ class FlowerClient(fl.client.NumPyClient):
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
 
-        trainer = pl.Trainer()
+        trainer = pl.Trainer(accelerator='cpu')
         results = trainer.test(self.model, self.test_loader)
-        print("-------------------------------------------RESULTADOS --------------------------------------------------")
+        print("-------------------RESULTADOS-------------------")
         print(results)
 
         loss = results[0]["test_loss"]
@@ -97,7 +97,7 @@ def main() -> None:
                    n_layers=args['n_layers'], use_bias=args['use_bias'], 
                    dropout=args['dropout'])
     
-    trainer = pl.Trainer(max_epochs=2, accelerator='cpu')
+    trainer = pl.Trainer(max_epochs=1, accelerator='cpu', default_root_dir='/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/')
 
     # Train
     trainer.fit(model, train_loader)
