@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader, Dataset
 
 import lightning as L
 import pytorch_lightning as pl
+from lightning.pytorch.loggers import TensorBoardLogger
+
 
 from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_score
 from sklearn.preprocessing import MinMaxScaler
@@ -28,16 +30,17 @@ class LSTMAE_Lightning(pl.LightningModule):
         self.use_bias = use_bias
         self.dropout = dropout
 
-        self.encoder = nn.LSTM(self.n_features, self.hidden_size, batch_first=True,
+        self.encoder = nn.LSTM(self.n_features, self.hidden_size, batch_first=True, device='cpu',
                                num_layers=self.n_layers[0], bias=self.use_bias[0], dropout=self.dropout[0])
-        self.decoder = nn.LSTM(self.n_features, self.hidden_size, batch_first=True,
+        self.decoder = nn.LSTM(self.n_features, self.hidden_size, batch_first=True, device='cpu',
                                num_layers=self.n_layers[1], bias=self.use_bias[1], dropout=self.dropout[1])
-        self.hidden2output = nn.Linear(self.hidden_size, self.n_features)
+        self.hidden2output = nn.Linear(self.hidden_size, self.n_features, device='cpu')
 
-        self.automatic_optimization = False
+        self.automatic_optimization = True
         
         self.scores = []
         self.ys = []
+        self.training_step_outputs = []
         self.output_model = None
 
     def forward(self, batch, Pi=None, priors_corr=None, prior_test=None):
@@ -76,6 +79,7 @@ class LSTMAE_Lightning(pl.LightningModule):
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(output, y)
         
+        self.training_step_outputs.append(loss)
         self.log('train_loss', loss)
         return loss
 
@@ -100,11 +104,11 @@ class LSTMAE_Lightning(pl.LightningModule):
         self.ys.append(y.detach().cpu().numpy())
 
         self.log('test_loss', loss, prog_bar=True)
-        # self.log('test_accuracy', accu, prog_bar=True)
+        self.logger.experiment.add_scalar('test_loss', loss)
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters())
+        return torch.optim.Adam(self.parameters(), lr=0.001)
     
     def backward(self, loss):
         loss.backward()
@@ -116,6 +120,15 @@ class LSTMAE_Lightning(pl.LightningModule):
     def on_train_batch_start(self, *args, **kwargs):
         # Ensure that the hidden state is on the same device as the model
         self.hidden2output = self.hidden2output
+
+    
+    def on_train_epoch_end(self):
+        # do something with all training_step outputs, for example:
+        epoch_mean = torch.stack(self.training_step_outputs).mean()
+        self.log("training_epoch_mean", epoch_mean)
+        # free up the memory
+        self.training_step_outputs.clear()
+
 
     def on_test_end(self):
         scores = np.concatenate(self.scores, axis=0)
@@ -129,8 +142,8 @@ class LSTMAE_Lightning(pl.LightningModule):
         auc_roc = roc_auc_score(ys, scores)
         ap = average_precision_score(ys, scores)
 
-        self.logger.experiment('test_auc_roc', auc_roc, prog_bar=True)
-        self.logger.experiment('test_avg_precision', ap, prog_bar=True)
+        self.logger.experiment.add_scalar('test_auc_roc', auc_roc)
+        self.logger.experiment.add_scalar('test_avg_precision', ap)
 
 
     def calc_metrics(self):
@@ -274,7 +287,7 @@ def load_data(node_id, batch_size, window_len):
 def main() -> None:
     """Centralized training."""
 
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device_obj = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     checkpoint_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/'
 
@@ -293,8 +306,12 @@ def main() -> None:
                    dropout=args['dropout'])
 
 
+    # Instantiate Logger and Trainer
+
+    logger_tensorboard = TensorBoardLogger("tb_logs", name="my_model")
+    trainer = pl.Trainer(max_epochs=args['epochs'], accelerator='cpu', logger=logger_tensorboard, default_root_dir=checkpoint_path)
+    
     # Train
-    trainer = pl.Trainer(max_epochs=args['epochs'],accelerator='cpu',  default_root_dir=checkpoint_path)
     trainer.fit(model, train_loader)
 
     # Validation
@@ -307,7 +324,7 @@ def main() -> None:
     # get metrics
     auc_roc_metric, avg_precicion_metric, scores_chkpt = model.calc_metrics()
     print("=======================================================")
-    print('auc-roc: ' + str(auc_roc_metric) + ' auc_pr: ' + str(avg_precicion_metric), end='')
+    print('auc-roc: ' + str(auc_roc_metric) + ' auc_pr: ' + str(avg_precicion_metric))
     print("=======================================================")
     
 
