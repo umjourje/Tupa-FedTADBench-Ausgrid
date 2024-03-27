@@ -41,6 +41,7 @@ class LSTMAE_Lightning(pl.LightningModule):
         self.scores = []
         self.ys = []
         self.training_step_outputs = []
+        self.test_step_outputs = []
         self.output_model = None
 
     def forward(self, batch, Pi=None, priors_corr=None, prior_test=None):
@@ -78,9 +79,11 @@ class LSTMAE_Lightning(pl.LightningModule):
 
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(output, y)
+        loss_bin = F.binary_cross_entropy(torch.sigmoid(output), torch.sigmoid(y))
         
         self.training_step_outputs.append(loss)
-        self.log('train_loss', loss)
+        self.log('train_loss_step', loss)
+        self.log('train_BCE_loss', loss_bin)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -89,9 +92,7 @@ class LSTMAE_Lightning(pl.LightningModule):
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(feature, y)
         
-        # accu = accuracy_score(output, y)
-        self.log('train_val_loss', loss)
-        # self.log('train_val_accuracy', accu)
+        # self.log('train_val_loss', loss)
         return loss
     
     def test_step(self, batch, batch_idx):
@@ -99,12 +100,13 @@ class LSTMAE_Lightning(pl.LightningModule):
 
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(output, y)
-    
+
+        self.test_step_outputs.append(loss)
         self.scores.append(logits.detach().cpu().numpy())
         self.ys.append(y.detach().cpu().numpy())
 
-        self.log('test_loss', loss, prog_bar=True)
-        self.logger.experiment.add_scalar('test_loss', loss)
+        # self.log('test_loss', loss, prog_bar=True)
+        # self.logger.experiment.add_scalar('test_loss', loss)
         return loss
 
     def configure_optimizers(self):
@@ -123,11 +125,18 @@ class LSTMAE_Lightning(pl.LightningModule):
 
     
     def on_train_epoch_end(self):
-        # do something with all training_step outputs, for example:
         epoch_mean = torch.stack(self.training_step_outputs).mean()
-        self.log("training_epoch_mean", epoch_mean)
-        # free up the memory
+        tensorboard_logs = {'train_loss_1':epoch_mean, 'step':self.current_epoch}
+        
+        #self.log("training_epoch_mean", epoch_mean)
+        #self.logger.experiment.add_scalar("tb_training_epoch_mean", epoch_mean, self.current_epoch)
         self.training_step_outputs.clear()
+        
+        #print('++++++++++++++++++++++++++++++++++++++')
+        #print('época atual:', self.current_epoch)
+        #print('++++++++++++++++++++++++++++++++++++++')
+        return {'loss':epoch_mean, 'log':tensorboard_logs}
+        
 
 
     def on_test_end(self):
@@ -142,8 +151,14 @@ class LSTMAE_Lightning(pl.LightningModule):
         auc_roc = roc_auc_score(ys, scores)
         ap = average_precision_score(ys, scores)
 
-        self.logger.experiment.add_scalar('test_auc_roc', auc_roc)
-        self.logger.experiment.add_scalar('test_avg_precision', ap)
+        test_loss_mean = torch.stack(self.test_step_outputs).mean()
+        tensorboard_logs = {'test_loss':test_loss_mean, 'step':self.current_epoch}
+        
+        # self.logger.experiment.add_scalar('test_auc_roc', auc_roc)
+        # self.logger.experiment.add_scalar('test_avg_precision', ap)
+
+        tensorboard_logs = {'test_auc_roc':auc_roc, 'test_avg_precision': ap, 'step':self.current_epoch}
+        return {'test_auc':auc_roc, 'log':tensorboard_logs}
 
 
     def calc_metrics(self):
@@ -291,7 +306,7 @@ def main() -> None:
 
     checkpoint_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/'
 
-    args = {'n_features':7, 'dataset_name': 'ausgrid', 'epochs': 1, 'batch_size': 64, 
+    args = {'n_features':7, 'dataset_name': 'ausgrid', 'epochs': 2, 'batch_size': 64, 
             'lr': 0.001, 'hidden_size': 32, 'n_layers': (2, 2), 'use_bias': (True, True), 
             'dropout': (0, 0), 'criterion': nn.MSELoss(), 
             'random_seed': 42, 'window_len': 30}

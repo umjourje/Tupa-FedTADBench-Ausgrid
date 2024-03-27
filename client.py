@@ -109,6 +109,9 @@ def main() -> None:
     # Train
     trainer.fit(model, train_loader)
 
+    # Validation
+    trainer.validate(model, val_loader)
+
     # Test
     trainer.test(model, test_loader)
 
