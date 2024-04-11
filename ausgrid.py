@@ -90,23 +90,31 @@ class LSTMAE_Lightning(pl.LightningModule):
         x, y = batch
 
         feature, logits, output = self.forward(x)
-        loss = F.mse_loss(feature, y)
+        loss = F.mse_loss(output, y)
+        loss_bin = F.binary_cross_entropy(torch.sigmoid(logits), torch.sigmoid(y))
         
-        # self.log('train_val_loss', loss)
-        return loss
+        self.scores.append(logits.detach().cpu().numpy())
+        self.ys.append(y.detach().cpu().numpy())
+        
+
+        self.logger.experiment.add_scalar('val_loss', loss)
+        self.logger.experiment.add_scalar('val_loss_bin', loss_bin)
+        return loss, loss_bin
     
     def test_step(self, batch, batch_idx):
         x, y = batch
 
         feature, logits, output = self.forward(x)
         loss = F.mse_loss(output, y)
+        # loss_bin = F.binary_cross_entropy(torch.sigmoid(output), torch.sigmoid(y))
 
         self.test_step_outputs.append(loss)
         self.scores.append(logits.detach().cpu().numpy())
         self.ys.append(y.detach().cpu().numpy())
 
-        # self.log('test_loss', loss, prog_bar=True)
-        # self.logger.experiment.add_scalar('test_loss', loss)
+        self.log('test_loss', loss, prog_bar=True)
+        self.logger.experiment.add_scalar('test_loss', loss)
+        # self.logger.experiment.add_scalar('test_loss_bin', loss_bin)
         return loss
 
     def configure_optimizers(self):
@@ -138,6 +146,27 @@ class LSTMAE_Lightning(pl.LightningModule):
         return {'loss':epoch_mean, 'log':tensorboard_logs}
         
 
+    def on_validation_epoch_end(self):
+        scores = np.concatenate(self.scores, axis=0)
+        ys = np.concatenate(self.ys, axis=0)
+
+        if len(scores.shape) == 2:
+            scores = np.squeeze(scores, axis=1)
+        if len(ys.shape) == 2:
+            ys = np.squeeze(ys, axis=1)
+
+        auc_roc = roc_auc_score(ys, scores)
+        ap = average_precision_score(ys, scores)
+
+        val_loss_mean = torch.stack(self.test_step_outputs).mean()
+        tensorboard_logs = {'val_loss':val_loss_mean, 'step':self.current_epoch}
+        
+        self.logger.experiment.add_scalar('val_auc_roc', auc_roc)
+        self.logger.experiment.add_scalar('val_avg_precision', ap)
+
+        tensorboard_logs = {'val_auc_roc':auc_roc, 'val_avg_precision': ap, 'step':self.current_epoch}
+        return {'val_auc':auc_roc, 'log':tensorboard_logs}
+
 
     def on_test_end(self):
         scores = np.concatenate(self.scores, axis=0)
@@ -154,8 +183,8 @@ class LSTMAE_Lightning(pl.LightningModule):
         test_loss_mean = torch.stack(self.test_step_outputs).mean()
         tensorboard_logs = {'test_loss':test_loss_mean, 'step':self.current_epoch}
         
-        # self.logger.experiment.add_scalar('test_auc_roc', auc_roc)
-        # self.logger.experiment.add_scalar('test_avg_precision', ap)
+        self.logger.experiment.add_scalar('test_auc_roc', auc_roc)
+        self.logger.experiment.add_scalar('test_avg_precision', ap)
 
         tensorboard_logs = {'test_auc_roc':auc_roc, 'test_avg_precision': ap, 'step':self.current_epoch}
         return {'test_auc':auc_roc, 'log':tensorboard_logs}
@@ -193,7 +222,7 @@ class Ausgrid_Dataset(Dataset):
 
     def __build_truncated_dataset__(self):
 
-        base_path = '/home/labnet/Documents/JulianaPiaz/split_dataset'
+        base_path = '/home/labnet/Documents/JulianaPiaz/split_dataset_normal'
             
         if (self.trainValTest=='train'):
             data = pd.read_csv(base_path + f'/train_{self.client_num}.csv')
@@ -206,7 +235,7 @@ class Ausgrid_Dataset(Dataset):
             data = data.values.astype(np.float32)
             data = np.nan_to_num(data)
             data = self.scaler.transform(data)
-            val_target_path = f'/home/labnet/Documents/JulianaPiaz/split_dataset/val_label_{self.client_num}.csv'
+            val_target_path = f'/home/labnet/Documents/JulianaPiaz/split_dataset_normal/val_label_{self.client_num}.csv'
             target_csv = pd.read_csv(val_target_path)
             target = target_csv.values
             target = target.astype(np.float32)
@@ -215,7 +244,7 @@ class Ausgrid_Dataset(Dataset):
             data = data.values.astype(np.float32)
             data = np.nan_to_num(data)
             data = self.scaler.transform(data)
-            test_target_path = f'/home/labnet/Documents/JulianaPiaz/split_dataset/test_label_{self.client_num}.csv'
+            test_target_path = f'/home/labnet/Documents/JulianaPiaz/split_dataset_normal/test_label_{self.client_num}.csv'
             target_csv = pd.read_csv(test_target_path)
             target = target_csv.values
             target = target.astype(np.float32)
@@ -304,15 +333,15 @@ def main() -> None:
 
     # device_obj = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    checkpoint_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/'
+    # checkpoint_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/'
 
-    args = {'n_features':7, 'dataset_name': 'ausgrid', 'epochs': 2, 'batch_size': 64, 
+    args = {'n_features':7, 'dataset_name': 'ausgrid', 'epochs': 10, 'batch_size': 32, 
             'lr': 0.001, 'hidden_size': 32, 'n_layers': (2, 2), 'use_bias': (True, True), 
             'dropout': (0, 0), 'criterion': nn.MSELoss(), 
             'random_seed': 42, 'window_len': 30}
     
     # Load data
-    train_loader, val_loader, test_loader = load_data(0, args['batch_size'], args['window_len'])
+    train_loader, val_loader, test_loader = load_data(9, args['batch_size'], args['window_len'])
 
     # Load model
     # model = LSTMAE_Lightning.load_from_checkpoint(checkpoint_path+"checkpoint.ckpt")
@@ -323,24 +352,41 @@ def main() -> None:
 
     # Instantiate Logger and Trainer
 
-    logger_tensorboard = TensorBoardLogger("tb_logs", name="my_model")
-    trainer = pl.Trainer(max_epochs=args['epochs'], accelerator='cpu', logger=logger_tensorboard, default_root_dir=checkpoint_path)
+    logger_tensorboard = TensorBoardLogger("tb_logs", name="trial_centralized")
+    
+    trainer = pl.Trainer(max_epochs=args['epochs'], accelerator='cpu', logger=logger_tensorboard)
     
     # Train
     trainer.fit(model, train_loader)
 
     # Validation
-    trainer.validate(model, val_loader)
+    # trainer.validate(model, val_loader)
     
     # Test
     trainer.test(model, test_loader)
 
+    run_id = 30
+    # Metrics
+    model_save_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/logs_metrics/models/' + args['dataset_name'] + '_centralized_model_run_client9_' + str(run_id) + '.pth'
+    score_save_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/logs_metrics/scores/' + args['dataset_name'] + '_centralized_score_run_' + str(run_id) + '.npy'
 
     # get metrics
-    auc_roc_metric, avg_precicion_metric, scores_chkpt = model.calc_metrics()
+    auc_roc_metric, avg_precicion_metric, scores_epoch = model.calc_metrics()
     print("=======================================================")
     print('auc-roc: ' + str(auc_roc_metric) + ' auc_pr: ' + str(avg_precicion_metric))
     print("=======================================================")
+    
+    best_auc_roc = 0
+    best_ap = 0
+
+    if auc_roc_metric > best_auc_roc:
+            best_auc_roc = auc_roc_metric
+            best_ap = avg_precicion_metric
+            torch.save(model.state_dict(), model_save_path)
+            np.save(score_save_path, scores_epoch)
+            print(' update')
+    else:
+        print()
     
 
 if __name__ == '__main__':

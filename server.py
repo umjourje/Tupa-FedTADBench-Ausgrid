@@ -30,8 +30,9 @@ class SaveModelStrategy(fl.server.strategy.FedAvg):
             aggregated_ndarrays: List[np.ndarray] = fl.common.parameters_to_ndarrays(aggregated_parameters)
 
             # Save aggregated_ndarrays
+            run_id = 1
             print(f"Saving round {server_round} aggregated_ndarrays...")
-            np.savez(f"round-{server_round}-weights.npz", *aggregated_ndarrays)
+            np.savez(f"/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/server_model_10ep/run_{run_id}-round_{server_round}-weights.npz", *aggregated_ndarrays)
 
         return aggregated_parameters, aggregated_metrics
     
@@ -47,7 +48,7 @@ def main() -> None:
     # Start Flower server for three rounds of federated learning
     fl.server.start_server(
         server_address="0.0.0.0:8080",
-        config=fl.server.ServerConfig(num_rounds=1),
+        config=fl.server.ServerConfig(num_rounds=5),
         strategy=strategy,
     )
 

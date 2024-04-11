@@ -37,7 +37,8 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         self.set_parameters(parameters)
     
-        trainer = pl.Trainer(max_epochs=1, accelerator='cpu', logger=self.logger_tensorboard, default_root_dir='/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/')
+        # default_root_dir='/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/checkpoints/model/'
+        trainer = pl.Trainer(max_epochs=10, accelerator='cpu', logger=self.logger_tensorboard)
         trainer.fit(self.model, self.train_loader,)
 
         return self.get_parameters(config={}), 55000, {}
@@ -83,9 +84,9 @@ def main() -> None:
     #batch_size = args.batch_size
     #window_len = args.window_len
 
-    logger_tb = TensorBoardLogger("tb_logs", name="test_4c")
+    logger_tb = TensorBoardLogger("tb_logs", name="trial_5c_10epochs")
 
-    args = {'n_features':8, 'dataset_name': 'ausgrid', 'epochs': 1, 'batch_size': 32, 
+    args = {'n_features':7, 'dataset_name': 'ausgrid', 'epochs': 1, 'batch_size': 32, 
             'lr': 0.001, 'hidden_size': 32, 'n_layers': (2, 2), 'use_bias': (True, True), 
             'dropout': (0, 0),
             'random_seed': 42, 'window_len': 30}
@@ -110,16 +111,17 @@ def main() -> None:
     trainer.fit(model, train_loader)
 
     # Validation
-    trainer.validate(model, val_loader)
+    # trainer.validate(model, val_loader)
 
     # Test
     trainer.test(model, test_loader)
 
     val_loader = None
 
+    run_id = 1
     # Metrics
-    model_save_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/logs_metrics/models/' + args['dataset_name'] + '_model_epoch_' + '.pth'
-    score_save_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/logs_metrics/scores/' + args['dataset_name'] + '_score_epoch_' + '.npy'
+    model_save_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/logs_metrics/models/' + args['dataset_name'] + '_model_run_' + str(run_id) + '.pth'
+    score_save_path = '/home/labnet/Documents/JulianaPiaz/quickstart-pytorch-lightning/logs_metrics/scores/' + args['dataset_name'] + '_score_run_' + str(run_id) + '.npy'
 
     auc_roc_metric, avg_precicion_metric, scores_epoch = model.calc_metrics()
     print("=======================================================")
